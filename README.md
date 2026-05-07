@@ -48,8 +48,9 @@ control_device: Master       # Канал управления (amixer scontrols
 work_start: 08:00            # Начало работы (HH:MM)
 work_end: 22:00              # Конец работы (HH:MM)
 stations:                    # Список URL через запятую
-    http://1.fm,
-    http://hostingradio.ru
+    http://ep256.hostingradio.ru:8052/europaplus256.mp3,
+    http://rusradio.hostingradio.ru/rusradio128.mp3,
+    http://nashe1.hostingradio.ru/nashespb128.mp3
 ```
 
 ---
