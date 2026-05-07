@@ -183,40 +183,52 @@ class VoiceModule:
     def cmd_FM(self, gcmd):
         p = gcmd.get_command_parameters()
         raw = gcmd.get_raw_command_parameters().strip()
-        idx_s = p.get('S', raw)
-        url = None
         
-        # Определяем URL
+        url = p.get('URL')
+        idx_s = p.get('S')
+        
+        # Логика определения URL
         if idx_s:
-            if idx_s.isdigit():
+            try:
                 idx = int(idx_s)
+                if 1 <= idx <= len(self.stations):
+                    url = self.stations[idx - 1]
+                else:
+                    gcmd.respond_info(f"⚠ Ошибка: Станции №{idx} нет в списке.")
+                    return
+            except ValueError:
+                url = idx_s # Если в S попал текст, пробуем его как URL
+        elif not url and raw:
+            # Если нет ключей S или URL, но есть текст (например: FM http://...)
+            if raw.isdigit():
+                idx = int(raw)
                 url = self.stations[idx - 1] if 1 <= idx <= len(self.stations) else None
-            elif "http" in idx_s: 
-                url = idx_s
-        
+            else:
+                url = raw
+
         if not url:
-            gcmd.respond_info("FM Error: Станция не найдена")
+            gcmd.respond_info("FM: Укажите номер станции S= или ссылку URL=")
             return
 
-        # ЗАПОМИНАЕМ URL как главную цель
         self.last_url = url
         self._save_state()
 
-        # Если сейчас тихий час
         if not self._is_work_time():
-            gcmd.respond_info(f"🌙 FM: Сейчас время тишины. Станция №{idx_s} запомнена и включится в рабочее время.")
+            gcmd.respond_info("🌙 FM: Сейчас время тишины. Станция запомнена.")
             return
 
-        # Если сейчас идет озвучка или очередь не пуста
+        # Если идет VOICE, ставим в очередь
         if self.voice_process or not self.queue.empty():
-            # ВОТ ЭТА СТРОЧКА, КОТОРУЮ МЫ ЗАБЫЛИ:
-            gcmd.respond_info(f"📡 FM: Станция №{idx_s} добавлена в план. Она включится автоматически сразу после уведомлений VOICE.")
+            gcmd.respond_info(f"📡 FM: Станция добавлена в план. Включится после уведомлений.")
             return
 
-        # Если принтер молчит — запускаем сразу
-        self.cmd_FM_STOP(None) # Тихий стоп без затирки last_url
+        self.cmd_FM_STOP(None)
         self._start_fm(url)
-        gcmd.respond_info(f"📡 FM: Подключение к станции №{idx_s}...")
+        
+        # Красивый вывод названия
+        display_name = f"№{idx_s}" if idx_s and idx_s.isdigit() else "по прямой ссылке"
+        gcmd.respond_info(f"📡 FM: Подключение {display_name}...")
+
 
 
     def cmd_FM_STOP(self, gcmd):
