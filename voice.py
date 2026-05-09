@@ -5,11 +5,11 @@ class VoiceModule:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.gcode = self.printer.lookup_object('gcode')
-        self.reactor = self.printer.get_reactor()
         
         # Жёсткая зачистка старых процессов
         subprocess.run(['pkill', '-9', 'ffplay'], capture_output=True)
         subprocess.run(['pkill', '-9', 'mpg123'], capture_output=True)
+        self.reactor = self.printer.get_reactor()
 
         self.voice_path = os.path.expanduser(config.get('path', '~/voice_files/'))
         self.default_volume = config.getint('default_volume', 80)
@@ -48,25 +48,28 @@ class VoiceModule:
         self.gcode.register_command('FM_LIST', self.cmd_FM_LIST)
 
     def _display(self, msg, type="echo"):
-        """Вывод с защитой от 'призрачных' сообщений после остановки"""
+        """Безопасный вывод для ClipperScreen через реактор (чтобы не вешать EBB)"""
+        # Простая фильтрация, чтобы не слать лишнее, если радио выключено
+        metatags = ["Радио:", "Жанр:", "играет:", "✅ FM:"]
+        if any(tag in msg for tag in metatags) and not self.last_url:
+            return
+
+        # Настраиваем задержки, чтобы ClipperScreen успел показать всё
         delay = 0.1
-        if "Радио:" in msg: delay = 2
+        if "Радио:" in msg: delay = 2.0
         if "Жанр:" in msg: delay = 3.5
-        if "играет:" in msg: delay = 5
+        if "играет:" in msg: delay = 5.0
 
         def _send(eventtime):
-            # Если это метаданные, но радио уже выключили (fm_stop), то молчим
-            metatags = ["Радио:", "Жанр:", "играет:", "✅ FM:"]
-            time.sleep(1)
-            if any(tag in msg for tag in metatags) and not self.last_url:
-                return 
-            
+            # run_script заставляет Klipper выполнить команду RESPOND
             try:
                 self.gcode.run_script(f'RESPOND TYPE={type} MSG="{msg}"')
             except:
                 pass
         
+        # Асинхронный вызов через реактор — это секрет стабильности EBB
         self.reactor.register_callback(_send, self.reactor.monotonic() + delay)
+
 
     def _save_state(self):
         try:
@@ -92,16 +95,11 @@ class VoiceModule:
 
     def _metadata_spy(self):
         while True:
-            # Проверяем не только наличие процесса, но и наличие last_url
             if self.fm_process and self.fm_process.poll() is None and self.last_url:
                 try:
                     cmd = ['ffprobe', '-v', 'quiet', '-show_format', '-icy', '1', self.last_url]
                     res = subprocess.run(cmd, capture_output=True, text=True, timeout=7)
-                    
-                    # Еще одна проверка: не нажали ли STOP пока работал ffprobe (он долгий)
-                    if not self.last_url:
-                        continue
-
+                    if not self.last_url: continue
                     match = re.search(r"TAG:StreamTitle=(.*)", res.stdout)
                     if match:
                         track = match.group(1).strip()
@@ -109,8 +107,7 @@ class VoiceModule:
                             self.current_track = track
                             self._display(f"🎵 Сейчас играет: {self.current_track}")
                 except: pass
-            time.sleep(10)
-
+            time.sleep(30)
 
     def _metadata_worker(self, pipe):
         connected = False
@@ -140,46 +137,6 @@ class VoiceModule:
                             self._display(f"🎵 Сейчас играет: {self.current_track}")
             except: continue
         pipe.close()
-
-    def _has_internet(self):
-        try:
-            subprocess.run(['ping', '-c', '1', '-W', '2', '8.8.8.8'], 
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            return True
-        except: return False
-
-    def _handle_ready(self):
-        if self.last_url and self._is_work_time() and not self.fm_process:
-            time.sleep(2.0)
-            self._set_sys_volume(self.default_volume)
-            self._start_fm(self.last_url)
-            self._display("🚀 FM: Система готова, автозапуск...")
-
-    def _time_monitor(self):
-        while True:
-            try:
-                if self._is_work_time():
-                    has_net = self._has_internet()
-                    if self.fm_process and not has_net:
-                        if not self.is_offline:
-                            self._display("⚠️ FM: Потеря соиденения...")
-                            self.is_offline = True
-                        try: os.killpg(os.getpgid(self.fm_process.pid), 9)
-                        except: pass
-                        self.fm_process = None
-                    elif self.last_url and not self.fm_process and self.is_offline:
-                        if has_net:
-                            self._display("🌐 FM: Соединение восстановлено!")
-                            self.is_offline = False
-                            self._set_sys_volume(self.default_volume)
-                            self._start_fm(self.last_url)
-                else:
-                    if self.fm_process:
-                        try: os.killpg(os.getpgid(self.fm_process.pid), 9)
-                        except: pass
-                        self.fm_process = None
-            except: pass
-            time.sleep(5)
 
     def _start_fm(self, url):
         if not self._is_work_time(): return
@@ -219,6 +176,46 @@ class VoiceModule:
                         time.sleep(0.5); self._start_fm(self.last_url)
                 self.queue.task_done()
 
+    # ... Остальные методы (cmd_FM, cmd_FM_STOP, cmd_SET_VOLUME, и т.д.) остаются ОРИГИНАЛЬНЫМИ
+    def _has_internet(self):
+        try:
+            subprocess.run(['ping', '-c', '1', '-W', '2', '8.8.8.8'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            return True
+        except: return False
+
+    def _handle_ready(self):
+        if self.last_url and self._is_work_time() and not self.fm_process:
+            time.sleep(2.0)
+            self._set_sys_volume(self.default_volume)
+            self._start_fm(self.last_url)
+            self._display("🚀 FM: Система готова, автозапуск...")
+
+    def _time_monitor(self):
+        while True:
+            try:
+                if self._is_work_time():
+                    has_net = self._has_internet()
+                    if self.fm_process and not has_net:
+                        if not self.is_offline:
+                            self._display("⚠️ FM: Потеря соединения...")
+                            self.is_offline = True
+                        try: os.killpg(os.getpgid(self.fm_process.pid), 9)
+                        except: pass
+                        self.fm_process = None
+                    elif self.last_url and not self.fm_process and self.is_offline:
+                        if has_net:
+                            self._display("🌐 FM: Соединение восстановлено!")
+                            self.is_offline = False
+                            self._set_sys_volume(self.default_volume)
+                            self._start_fm(self.last_url)
+                else:
+                    if self.fm_process:
+                        try: os.killpg(os.getpgid(self.fm_process.pid), 9)
+                        except: pass
+                        self.fm_process = None
+            except: pass
+            time.sleep(5)
+
     def cmd_FM(self, gcmd):
         p = gcmd.get_command_parameters()
         raw = gcmd.get_raw_command_parameters().strip()
@@ -227,7 +224,7 @@ class VoiceModule:
             try:
                 idx = int(idx_s)
                 url = self.stations[idx - 1] if 1 <= idx <= len(self.stations) else None
-                if not url: self._display(f"⚠ Ошибка: Станции №{idx} нет."); return
+                if not url: self._display(f"⚠ Станции №{idx} нет."); return
             except: url = idx_s
         elif not url and raw:
             if raw.isdigit():
@@ -238,10 +235,10 @@ class VoiceModule:
         self.last_url = url
         self._save_state()
         if not self._is_work_time():
-            self._display("🌙 FM: Сейчас время тишины. Станция запомнена.")
+            self._display("🌙 FM: Сейчас время тишины.")
             return
         if self.voice_process or not self.queue.empty():
-            self._display("📡 FM: Добавлена в план (после уведомлений).")
+            self._display("📡 FM: В плане (после уведомлений).")
             return
         self.cmd_FM_STOP(None)
         self._start_fm(url)
@@ -304,3 +301,4 @@ class VoiceModule:
             subprocess.run(['pkill', '-9', 'mpg123'], capture_output=True)
 
 def load_config(config): return VoiceModule(config)
+
