@@ -85,23 +85,6 @@ stations:                    # Список URL через запятую
 # ГОРЯЧИЕ КЛАВИШИ И УПРАВЛЕНИЕ ЗВУКОМ
 #####################################################################
 
-[gcode_macro VOICE]
-variable_last_id: 1
-rename_existing: VOICE_BASE
-gcode:
-  {% if params.S is undefined %}
-    # Циклическое переключение файлов, если S не указан
-    {% set S = printer["gcode_macro VOICE"].last_id + 1 %}
-    {% if S > 10 %} # Укажите своё количество файлов .mp3
-      {% set S = 1 %}
-    {% endif %}
-  {% else %}
-    {% set S = params.S %}
-  {% endif %}
-  
-  SET_GCODE_VARIABLE MACRO=VOICE VARIABLE=last_id VALUE={S}
-  VOICE_BASE S={S}
-
 [gcode_macro FM]
 variable_last_s: 1
 rename_existing: FM_BASE
