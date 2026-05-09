@@ -95,11 +95,23 @@ class VoiceModule:
 
     def _metadata_spy(self):
         while True:
+            # 1. Если принтер печатает — шпион спит, чтобы не грузить шину данных
+            print_stats = self.printer.lookup_object('print_stats', None)
+            if print_stats and print_stats.state == "printing":
+                time.sleep(30)
+                continue
+
+            # 2. Проверяем, запущено ли радио
             if self.fm_process and self.fm_process.poll() is None and self.last_url:
                 try:
+                    # ffprobe может занять до 7 секунд
                     cmd = ['ffprobe', '-v', 'quiet', '-show_format', '-icy', '1', self.last_url]
                     res = subprocess.run(cmd, capture_output=True, text=True, timeout=7)
-                    if not self.last_url: continue
+                    
+                    # 3. КРИТИЧЕСКАЯ ПРОВЕРКА: если пока работал ffprobe нажали FM_STOP — выходим
+                    if not self.last_url:
+                        continue
+
                     match = re.search(r"TAG:StreamTitle=(.*)", res.stdout)
                     if match:
                         track = match.group(1).strip()
@@ -107,7 +119,10 @@ class VoiceModule:
                             self.current_track = track
                             self._display(f"🎵 Сейчас играет: {self.current_track}")
                 except: pass
-            time.sleep(30)
+            
+            # Твой проверенный интервал опроса
+            time.sleep(10)
+
 
     def _metadata_worker(self, pipe):
         connected = False
