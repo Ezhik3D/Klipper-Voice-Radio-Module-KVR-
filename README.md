@@ -54,7 +54,11 @@ stations:                    # Список URL через запятую
     http://rusradio.hostingradio.ru/rusradio128.mp3,
     http://nashe1.hostingradio.ru/nashespb128.mp3
 ```
+Для вывода сообщений на KlipperScreen у вас должно быть включено`:
 
+```ini
+[respond]
+```
 ---
 
 ## 🕹 Команды G-Code
