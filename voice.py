@@ -110,7 +110,7 @@ class VoiceModule:
                             self.current_track = track
                             self._display(f"🎵 Сейчас играет: {self.current_track}")
                 except: pass
-            time.sleep(30)
+            time.sleep(10)
 
     def _metadata_worker(self, pipe):
         connected = False
