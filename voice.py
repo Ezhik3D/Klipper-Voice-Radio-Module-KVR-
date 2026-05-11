@@ -39,6 +39,7 @@ class VoiceModule:
         self.lock = threading.Lock() 
         self.state_file = os.path.expanduser("~/voice_state.json")
         self.is_offline = False
+        self.offline_counter = 0  # Счетчик неудачных проверок интернета
 
         self._load_state_silent()
 
@@ -57,17 +58,20 @@ class VoiceModule:
         self.gcode.register_command('FM_LIST', self.cmd_FM_LIST)
 
     def _display(self, msg, type="echo"):
-        metatags = ["Радио:", "Жанр:", "играет:", "✅ FM:"]
-        if any(tag in msg for tag in metatags) and not self.last_url:
-            return
+        """Вывод с защитой от 'призрачных' сообщений после остановки"""
         delay = 0.1
-        if "Радио:" in msg: delay = 2.0
+        if "Радио:" in msg: delay = 2
         if "Жанр:" in msg: delay = 3.5
-        if "играет:" in msg: delay = 5.0
+        if "играет:" in msg: delay = 5
+
         def _send(eventtime):
+            metatags = ["Радио:", "Жанр:", "играет:", "✅ FM:"]
+            if any(tag in msg for tag in metatags) and not self.last_url:
+                return 
             try:
                 self.gcode.run_script(f'RESPOND TYPE={type} MSG="{msg}"')
             except: pass
+        
         self.reactor.register_callback(_send, self.reactor.monotonic() + delay)
 
     def _save_state(self):
@@ -94,10 +98,6 @@ class VoiceModule:
 
     def _metadata_spy(self):
         while True:
-            print_stats = self.printer.lookup_object('print_stats', None)
-            if print_stats and print_stats.state == "printing":
-                time.sleep(30)
-                continue
             if self.fm_process and self.fm_process.poll() is None and self.last_url:
                 try:
                     cmd = ['ffprobe', '-v', 'quiet', '-show_format', '-icy', '1', self.last_url]
@@ -141,14 +141,73 @@ class VoiceModule:
             except: continue
         pipe.close()
 
+    def _has_internet(self):
+        try:
+            subprocess.run(['ping', '-c', '1', '-W', '2', '8.8.8.8'], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            return True
+        except: return False
+
+    def _handle_ready(self):
+        if self.last_url and self._is_work_time() and not self.fm_process:
+            time.sleep(2.0)
+            self._set_sys_volume(self.default_volume)
+            self._start_fm(self.last_url)
+            self.reactor.register_callback(lambda e: self._display("🚀 FM: Система готова, автозапуск..."), self.reactor.monotonic() + 1.0)
+
+    def _time_monitor(self):
+        while True:
+            try:
+                if self._is_work_time():
+                    has_net = self._has_internet()
+                    
+                    if not has_net:
+                        self.offline_counter += 1
+                    else:
+                        self.offline_counter = 0 # Сброс, если пинг прошел
+
+                    # Если радио играет, а интернета нет уже 15 секунд (3 итерации по 5 сек)
+                    if self.fm_process and self.offline_counter >= 3:
+                        if not self.is_offline:
+                            self._display("⚠️ FM: Потеря соединения (15с)...")
+                            self.is_offline = True
+                        try: os.killpg(os.getpgid(self.fm_process.pid), 9)
+                        except: pass
+                        self.fm_process = None
+                        self.offline_counter = 0 # Сбрасываем, чтобы не зацикливаться
+
+                    # Автовозобновление (тут реагируем сразу, как только сеть появилась)
+                    elif self.last_url and not self.fm_process and self.is_offline and has_net:
+                        self._display("🌐 FM: Соединение восстановлено!")
+                        self.is_offline = False
+                        self.offline_counter = 0
+                        self._set_sys_volume(self.default_volume)
+                        self._start_fm(self.last_url)
+                else:
+                    # Вне рабочего времени всё тушим
+                    if self.fm_process:
+                        try: os.killpg(os.getpgid(self.fm_process.pid), 9)
+                        except: pass
+                        self.fm_process = None
+                    self.offline_counter = 0
+            except: pass
+            time.sleep(5)
+
     def _start_fm(self, url):
         if not self._is_work_time(): return
         with self.lock:
             subprocess.run(['pkill', '-9', 'ffplay'], capture_output=True)
             try:
-                # Оптимизация для Bluetooth (буфер и фикс частоты)
+                # Настройка буфера: для Bluetooth ставим 1M, для ALSA оставляем 32
+                psize = '1M' if self.output_type == 'pulse' else '32'
+                adur = '5M' if self.output_type == 'pulse' else '0'
+                
+                        # Устанавливаем стабильный буфер 1Мб, чтобы переждать микро-лаги
                 cmd = ['ffplay', '-nodisp', '-loglevel', 'info', '-icy', '1', 
-                       '-probesize', '1M', '-analyzeduration', '5M', '-infbuf', url]
+                       '-probesize', '1M', '-analyzeduration', '5M', url]
+            
+                if self.output_type == 'pulse': cmd.insert(-1, '-infbuf')
+                
                 self.fm_process = subprocess.Popen(
                     cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, 
                     bufsize=1, universal_newlines=True, errors='replace', 
@@ -156,8 +215,7 @@ class VoiceModule:
                 )
                 self.current_track, self.current_station = "", ""
                 threading.Thread(target=self._metadata_worker, args=(self.fm_process.stderr,), daemon=True).start()
-            except Exception as e:
-                self._display(f"FM Error: {str(e)}")
+            except Exception as e: self._display(f"FM Error: {str(e)}")
 
     def _voice_worker(self):
         while True:
@@ -169,9 +227,10 @@ class VoiceModule:
                     if self.fm_process and self.fm_process.poll() is None:
                         os.killpg(os.getpgid(self.fm_process.pid), 9); self.fm_process = None
                 self._set_sys_volume(100)
+                
                 cmd = ['mpg123', '-q', filename]
-                if self.output_type == 'pulse':
-                    cmd = ['mpg123', '-o', 'pulse', '-q', filename]
+                if self.output_type == 'pulse': cmd = ['mpg123', '-o', 'pulse', '-q', filename]
+                
                 self.voice_process = subprocess.Popen(cmd, env=self.env)
                 self.voice_process.wait()
             except: pass
@@ -184,78 +243,33 @@ class VoiceModule:
                         time.sleep(0.5); self._start_fm(self.last_url)
                 self.queue.task_done()
 
-    def _has_internet(self):
-        try:
-            subprocess.run(['ping', '-c', '1', '-W', '2', '8.8.8.8'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            return True
-        except: return False
-
-    def _handle_ready(self):
-        if self.last_url and self._is_work_time() and not self.fm_process:
-            time.sleep(2.0)
-            self._set_sys_volume(self.default_volume)
-            self._start_fm(self.last_url)
-            self._display("🚀 FM: Система готова, автозапуск...")
-
-    def _time_monitor(self):
-        while True:
-            try:
-                if self._is_work_time():
-                    has_net = self._has_internet()
-                    if self.fm_process and not has_net:
-                        if not self.is_offline:
-                            self._display("⚠️ FM: Потеря соединения...")
-                            self.is_offline = True
-                        try: os.killpg(os.getpgid(self.fm_process.pid), 9)
-                        except: pass
-                        self.fm_process = None
-                    elif self.last_url and not self.fm_process and self.is_offline:
-                        if has_net:
-                            self._display("🌐 FM: Соединение восстановлено!")
-                            self.is_offline = False
-                            self._set_sys_volume(self.default_volume)
-                            self._start_fm(self.last_url)
-                else:
-                    if self.fm_process:
-                        try: os.killpg(os.getpgid(self.fm_process.pid), 9)
-                        except: pass
-                        self.fm_process = None
-            except: pass
-            time.sleep(5)
-
     def cmd_FM(self, gcmd):
-        p = gcmd.get_command_parameters()
-        raw = gcmd.get_raw_command_parameters().strip()
+        p = gcmd.get_command_parameters(); raw = gcmd.get_raw_command_parameters().strip()
         url, idx_s = p.get('URL'), p.get('S')
         if idx_s:
             try:
                 idx = int(idx_s)
                 url = self.stations[idx - 1] if 1 <= idx <= len(self.stations) else None
-                if not url: self._display(f"⚠ Станции №{idx} нет."); return
+                if not url: self._display(f"⚠ Ошибка: Станции №{idx} нет."); return
             except: url = idx_s
         elif not url and raw:
             if raw.isdigit():
-                idx = int(raw)
-                url = self.stations[idx - 1] if 1 <= idx <= len(self.stations) else None
+                idx = int(raw); url = self.stations[idx - 1] if 1 <= idx <= len(self.stations) else None
             else: url = raw
         if not url: self._display("FM: Укажите S= или URL="); return
-        self.last_url = url
-        self._save_state()
+        self.last_url = url; self._save_state()
         if not self._is_work_time():
-            self._display("🌙 FM: Сейчас время тишины.")
+            self._display("🌙 FM: Сейчас время тишины. Станция запомнена.")
             return
         if self.voice_process or not self.queue.empty():
-            self._display("📡 FM: В плане (после уведомлений).")
+            self._display("📡 FM: Добавлена в план (после уведомлений).")
             return
-        self.cmd_FM_STOP(None)
-        self._start_fm(url)
+        self.cmd_FM_STOP(None); self._start_fm(url)
         d_name = f"№{idx_s}" if idx_s and idx_s.isdigit() else "по ссылке"
         self._display(f"📡 FM: Подключение {d_name}...")
 
     def cmd_FM_STOP(self, gcmd):
-        if gcmd is not None: 
-            self.last_url, self.is_offline = None, False
-            self._save_state()
+        if gcmd is not None: self.last_url, self.is_offline = None, False; self._save_state()
         with self.lock:
             if self.fm_process:
                 try: os.killpg(os.getpgid(self.fm_process.pid), 9)
@@ -267,8 +281,7 @@ class VoiceModule:
 
     def cmd_VOICE(self, gcmd):
         if not self._is_work_time(): return
-        p = gcmd.get_command_parameters()
-        filename = p.get('S', gcmd.get_raw_command_parameters().strip())
+        p = gcmd.get_command_parameters(); filename = p.get('S', gcmd.get_raw_command_parameters().strip())
         if not filename: return
         if not filename.lower().endswith('.mp3'): filename += '.mp3'
         full_path = os.path.join(self.voice_path, filename)
