@@ -18,7 +18,7 @@ class VoiceModule:
         self.work_start = config.get('work_start', '06:00')
         self.work_end = config.get('work_end', '21:25')
         
-        # НОВОЕ: Тип вывода (alsa или pulse)
+        # Тип вывода (alsa или pulse)
         self.output_type = config.get('output_type', 'alsa').lower()
         
         # Настройка окружения для Bluetooth (Unix-сокет)
@@ -57,16 +57,13 @@ class VoiceModule:
         self.gcode.register_command('FM_LIST', self.cmd_FM_LIST)
 
     def _display(self, msg, type="echo"):
-        """Безопасный вывод для ClipperScreen через реактор"""
         metatags = ["Радио:", "Жанр:", "играет:", "✅ FM:"]
         if any(tag in msg for tag in metatags) and not self.last_url:
             return
-
         delay = 0.1
         if "Радио:" in msg: delay = 2.0
         if "Жанр:" in msg: delay = 3.5
         if "играет:" in msg: delay = 5.0
-
         def _send(eventtime):
             try:
                 self.gcode.run_script(f'RESPOND TYPE={type} MSG="{msg}"')
@@ -101,7 +98,6 @@ class VoiceModule:
             if print_stats and print_stats.state == "printing":
                 time.sleep(30)
                 continue
-
             if self.fm_process and self.fm_process.poll() is None and self.last_url:
                 try:
                     cmd = ['ffprobe', '-v', 'quiet', '-show_format', '-icy', '1', self.last_url]
@@ -114,7 +110,7 @@ class VoiceModule:
                             self.current_track = track
                             self._display(f"🎵 Сейчас играет: {self.current_track}")
                 except: pass
-            time.sleep(10)
+            time.sleep(30)
 
     def _metadata_worker(self, pipe):
         connected = False
@@ -150,7 +146,7 @@ class VoiceModule:
         with self.lock:
             subprocess.run(['pkill', '-9', 'ffplay'], capture_output=True)
             try:
-                # Оптимизация для Bluetooth: буфер 1Мб и фикс частоты 44100
+                # Оптимизация для Bluetooth (буфер и фикс частоты)
                 cmd = ['ffplay', '-nodisp', '-loglevel', 'info', '-icy', '1', 
                        '-probesize', '1M', '-analyzeduration', '5M', '-infbuf', url]
                 self.fm_process = subprocess.Popen(
@@ -173,11 +169,9 @@ class VoiceModule:
                     if self.fm_process and self.fm_process.poll() is None:
                         os.killpg(os.getpgid(self.fm_process.pid), 9); self.fm_process = None
                 self._set_sys_volume(100)
-                
                 cmd = ['mpg123', '-q', filename]
                 if self.output_type == 'pulse':
                     cmd = ['mpg123', '-o', 'pulse', '-q', filename]
-                
                 self.voice_process = subprocess.Popen(cmd, env=self.env)
                 self.voice_process.wait()
             except: pass
@@ -304,10 +298,8 @@ class VoiceModule:
         try:
             val = max(0, min(100, val))
             if self.output_type == 'pulse':
-                # Команда для Bluetooth громкости
                 subprocess.run(['pactl', 'set-sink-volume', self.device, f'{val}%'], capture_output=True, env=self.env)
             else:
-                # Команда для ALSA (3.5мм)
                 subprocess.run(['amixer', '-c', self.card, 'set', self.device, f'{val}%'], capture_output=True)
         except: pass
 
