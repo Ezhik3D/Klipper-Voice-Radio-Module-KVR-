@@ -93,7 +93,7 @@ pactl list sinks short
 alsa_output.usb-C-Media_Electronics_USB_Audio_Device-00.analog-stereo
 ```
 3. Добавьте в printer.cfg:
-```text
+```ini
 [voice]
 output_type: pulse
 control_device: @DEFAULT_SINK@   # Либо укажите конкретное имя из пункта 2
@@ -170,7 +170,7 @@ bluez_sink.12_11_06_D8_7A_17.a2dp_sink
 pactl set-default-sink bluez_sink.12_11_06_D8_7A_17.a2dp_sink
 ```
 ### Добавьте в printer.cfg:
-```text
+```ini
 [voice]
 output_type: pulse
 control_device: bluez_sink.12_11_06_D8_7A_17.a2dp_sink
