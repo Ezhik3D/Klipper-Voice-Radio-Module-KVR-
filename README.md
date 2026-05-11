@@ -47,21 +47,23 @@ cp voice.py ~/klipper/klippy/extras/
 
 1. Узнайте имя вашей звуковой карты:
 ```bash
-   aplay -l
+aplay -l
 ```  
    Вы увидите список устройств. Запомните номер карты (обычно 0 для встроенной, 1 для USB).
 
 2. Узнайте имя регулятора громкости:
-   amixer scontrols
+```bash
+amixer scontrols
+```
    Обычно это Master, Speaker или Headphone.
 
-3. Добавьте в printer.cfg:
+4. Добавьте в printer.cfg:
 ```ini
-   [voice]
-   output_type: alsa
-   control_card: 0              # Номер карты из aplay -l
-   control_device: Master       # Имя регулятора из amixer scontrols
-   # ... остальные параметры
+[voice]
+output_type: alsa
+control_card: 0              # Номер карты из aplay -l
+control_device: Master       # Имя регулятора из amixer scontrols
+# ... остальные параметры
 ```
 Готово! Переходите к разделу «Общая конфигурация».
 
@@ -76,26 +78,26 @@ cp voice.py ~/klipper/klippy/extras/
 1. Создайте Unix-сокет для Klipper:
    Откройте файл конфигурации PulseAudio:
 ```bash
-   sudo nano /etc/pulse/default.pa
+sudo nano /etc/pulse/default.pa
 ```
    Добавьте в самый конец файла строку:
 ```text
-   load-module module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse-socket
+load-module module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse-socket
 ```
 2. Узнайте имя вашего устройства (sink):
 ```bash
-   pactl list sinks short
+pactl list sinks short
 ```
    Вы увидите список устройств. Пример имени:
 ```text 
-   alsa_output.usb-C-Media_Electronics_USB_Audio_Device-00.analog-stereo
+alsa_output.usb-C-Media_Electronics_USB_Audio_Device-00.analog-stereo
 ```
 3. Добавьте в printer.cfg:
 ```text
-   [voice]
-   output_type: pulse
-   control_device: @DEFAULT_SINK@   # Либо укажите конкретное имя из пункта 2
-   # ... остальные параметры
+[voice]
+output_type: pulse
+control_device: @DEFAULT_SINK@   # Либо укажите конкретное имя из пункта 2
+# ... остальные параметры
 ```
 Готово! Переходите к разделу «Общая конфигурация».
 
@@ -109,33 +111,33 @@ cp voice.py ~/klipper/klippy/extras/
 
 1. Убедитесь, что Bluetooth работает:
 ```bash
-   sudo systemctl status bluetooth
+sudo systemctl status bluetooth
 ```
 2. Настройте авто-подключение:
    Откройте файл:
 ```bash
-   sudo nano /etc/bluetooth/main.conf
+sudo nano /etc/bluetooth/main.conf
 ```
    Найдите и раскомментируйте (уберите #) строки:
 ```text
-   AutoEnable=true
-   FastConnectable=true
-   ReconnectAttempts=0
+AutoEnable=true
+FastConnectable=true
+ReconnectAttempts=0
 ```
 3. Настройте PulseAudio для Bluetooth:
    Откройте файл:
 ```bash
-   sudo nano /etc/pulse/default.pa
+sudo nano /etc/pulse/default.pa
 ```
    Добавьте в самый конец файла эти 3 строки:
 ```text
-   load-module module-bluetooth-policy
-   load-module module-bluetooth-discover
-   load-module module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse-socket
+load-module module-bluetooth-policy
+load-module module-bluetooth-discover
+load-module module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse-socket
 ```
 4. Перезагрузите систему:
 ```bash
-   sudo reboot
+sudo reboot
 ```
 ### Сопряжение с колонкой (делается один раз):
 ```bash
@@ -157,15 +159,15 @@ exit
 
 1. Узнайте имя вашей колонки:
 ```bash
-   pactl list sinks short
+pactl list sinks short
 ```
    Найдите строку с bluez_sink. Пример:
 ```text
-   bluez_sink.12_11_06_D8_7A_17.a2dp_sink
+bluez_sink.12_11_06_D8_7A_17.a2dp_sink
 ```
 2. Сделайте колонку устройством по умолчанию:
 ```bash
-   pactl set-default-sink bluez_sink.12_11_06_D8_7A_17.a2dp_sink
+pactl set-default-sink bluez_sink.12_11_06_D8_7A_17.a2dp_sink
 ```
 ### Добавьте в printer.cfg:
 ```text
@@ -291,41 +293,42 @@ gcode:
 
 1. Проверьте громкость:
 ```ini
-   SET_VOLUME S=100
+SET_VOLUME S=100
 ```
 2. Проверьте голос (заранее положите файл test.mp3 в ~/voice_files/):
 ```ini
-   VOICE S=test
+VOICE S=test
 ```
 3. Проверьте радио (если есть интернет):
 ```ini
-   FM S=1
+FM S=1
 ```
 4. Проверьте список станций:
 ```ini
-   FM_LIST
+FM_LIST
 ```
 ### Если звука нет:
 
 1. Проверьте группу пользователя:
 ```bash
-   groups klipper | grep audio
-   Должно быть audio и pulse-access.
+groups klipper | grep audio
 ```
+   Должно быть audio и pulse-access.
+
 2. Проверьте железо (ALSA):
 ```bash
-   speaker-test -c 2 -t sine
+speaker-test -c 2 -t sine
 ```
    Должен быть слышен писк. Если нет — проблема не в модуле, а в настройке звука в системе.
 
 3. Проверьте PulseAudio (если используется):
 ```bash
-   sudo -u klipper pactl list sinks short
-   pactl stat
+sudo -u klipper pactl list sinks short
+pactl stat
 ```
 4. Проверьте сокет (для PulseAudio):
 ```bash
-   ls -l /tmp/pulse-socket
+ls -l /tmp/pulse-socket
 ```
 ---
 
